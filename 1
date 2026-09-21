@@ -2,7 +2,7 @@
 # 0) SETUP  ·  install + imports + seed              (nothing to change here)
 # =============================================================================
 # %pip install -q pandas numpy matplotlib seaborn scikit-learn openpyxl   # <- uncomment if a library is missing
-import warnings, numpy as np, pandas as pd, matplotlib.pyplot as plt, seaborn as sns
+import os, glob, warnings, numpy as np, pandas as pd, matplotlib.pyplot as plt, seaborn as sns
 warnings.filterwarnings("ignore")
 
 from sklearn.pipeline import Pipeline
@@ -28,6 +28,59 @@ SEED = 42                      # same seed everywhere -> same result every run
 np.random.seed(SEED)
 sns.set_theme(style="whitegrid")
 pd.set_option("display.width", 140, "display.max_columns", 50)
+
+# --- loader helpers live here (not in the load cell) so ANY later cell can rebuild `df` ---
+def find_file(path):
+    """Wrong/typo'd path? Look for the file in ., data/, datasets/, .. instead of crashing."""
+    if path is None: return None
+    if os.path.exists(path): return path
+    pool = [p for d in (".", "data", "datasets", "..") for e in ("csv", "xlsx", "xls")
+            for p in glob.glob(os.path.join(d, f"*.{e}"))]
+    want = os.path.basename(str(path)).lower()
+    hit = [p for p in pool if os.path.basename(p).lower() == want]          # same name, other folder
+    hit = hit or [p for p in pool if want.split(".")[0] in os.path.basename(p).lower()]
+    if hit:
+        print(f"'{path}' not found -> using '{hit[0]}'")
+        return hit[0]
+    raise FileNotFoundError(f"'{path}' not found. Data files I can see: {pool or 'none'} "
+                            f"(working folder = {os.getcwd()}). Fix PATH_1 / PATH_2 in the CONFIG block.")
+
+def load_any(path):
+    """Reads .csv/.xlsx/.xls without you having to care which one it is."""
+    path = find_file(path)
+    if str(path).lower().endswith((".xlsx", ".xls", ".xlsm")):
+        return pd.read_excel(path)
+    try:
+        return pd.read_csv(path, sep=None, engine="python")   # auto-detects , ; | tab
+    except Exception:
+        return pd.read_csv(path)
+
+def load_data():
+    """The whole loading + merging step as one function (uses PATH_1 / PATH_2 / MERGE_KEY)."""
+    p1 = find_file(PATH_1)
+    d = load_any(p1)
+    print(f"File 1: {p1} -> {d.shape}")
+    if PATH_2:
+        p2 = find_file(PATH_2)
+        d2 = load_any(p2)
+        print(f"File 2: {p2} -> {d2.shape}")
+        common = [c for c in d.columns if c in d2.columns]
+        if MERGE_KEY:                                             # explicit join
+            d = d.merge(d2, on=MERGE_KEY, how="inner")
+            print(f"Merged on {MERGE_KEY} -> {d.shape}")
+        elif set(d.columns) == set(d2.columns):                   # same columns -> stack rows
+            d = pd.concat([d, d2[d.columns]], ignore_index=True)
+            print(f"Same columns -> rows stacked -> {d.shape}")
+        elif common:                                              # shared key(s) -> join on them
+            d = d.merge(d2, on=common, how="inner")
+            print(f"Auto-merged on {common} -> {d.shape}")
+        elif len(d) == len(d2):                                   # no shared column, same length -> side by side
+            d = pd.concat([d, d2], axis=1)
+            print(f"Joined side by side -> {d.shape}")
+        else:
+            print("Files share nothing -> using file 1 only (set MERGE_KEY if they should be joined)")
+    d.columns = [str(c).strip() for c in d.columns]
+    return d
 
 # =============================================================================
 # 1) CONFIG  ·  THE ONLY BLOCK YOU EDIT IN THE EXAM
@@ -58,9 +111,9 @@ CLF_MODELS = {
     "nb":       lambda cw: GaussianNB(),
 }
 REG_MODELS = {
-    "linear":        lambda: LinearRegression(),            # multiple linear regression (all features)
+    "linear":      lambda: LinearRegression(),              # multiple linear regression (all features)
     "linear_simple": lambda: LinearRegression(),            # simple LR on the single best-correlated feature
-    "tree_reg":      lambda: DecisionTreeRegressor(random_state=SEED),
+    "tree_reg":    lambda: DecisionTreeRegressor(random_state=SEED),
 }
 
 RESULTS, FITTED, FAILED = [], {}, []     # filled automatically
@@ -68,47 +121,14 @@ RESULTS, FITTED, FAILED = [], {}, []     # filled automatically
 # =============================================================================
 # 2) LOAD DATA  ·  csv/excel, one or two files
 # =============================================================================
-def load_any(path):
-    """Reads .csv/.xlsx/.xls without you having to care which one it is."""
-    p = str(path).lower()
-    if p.endswith((".xlsx", ".xls", ".xlsm")):
-        return pd.read_excel(path)
-    try:
-        return pd.read_csv(path, sep=None, engine="python")   # auto-detects , ; | tab
-    except Exception:
-        return pd.read_csv(path)
-
-df = load_any(PATH_1)
-print(f"File 1: {PATH_1} -> {df.shape}")
-
-if PATH_2:
-    df2 = load_any(PATH_2)
-    print(f"File 2: {PATH_2} -> {df2.shape}")
-    common = [c for c in df.columns if c in df2.columns]
-    if MERGE_KEY:                                             # explicit join
-        df = df.merge(df2, on=MERGE_KEY, how="inner")
-        print(f"Merged on {MERGE_KEY} -> {df.shape}")
-    elif set(df.columns) == set(df2.columns):                 # same columns -> stack rows
-        df = pd.concat([df, df2[df.columns]], ignore_index=True)
-        print(f"Same columns -> rows stacked -> {df.shape}")
-    elif common:                                              # shared key(s) -> join on them
-        df = df.merge(df2, on=common, how="inner")
-        print(f"Auto-merged on {common} -> {df.shape}")
-    elif len(df) == len(df2):                                 # no shared column, same length -> side by side
-        df = pd.concat([df, df2], axis=1)
-        print(f"Joined side by side -> {df.shape}")
-    else:
-        print("Files share nothing -> using file 1 only (set MERGE_KEY if they should be joined)")
-
-df.columns = [str(c).strip() for c in df.columns]
-print("
---- First rows ---");  print(df.head())
+df = load_data()                 # reads 1 or 2 files and merges them (helpers are in section 0)
+print("\n--- First rows ---");  print(df.head())
 
 # =============================================================================
 # 3) EDA + CLEANING  ·  duplicates, missing, types, outliers, quick plots
 # =============================================================================
-print("
---- Dtypes & summary ---")
+if "df" not in globals(): df = load_data()   # safety net: rebuilds df if this cell is run on its own
+print("\n--- Dtypes & summary ---")
 print(df.dtypes)
 print(df.describe(include="all").T.head(20))
 
@@ -117,19 +137,15 @@ frac = dups / max(len(df), 1)
 has_cont = any(df[c].nunique() > 20 for c in df.columns)     # continuous data -> exact repeats = real duplicates
 if dups and (DROP_DUPS is True or (DROP_DUPS == "auto" and (has_cont or frac <= 0.2))):
     df = df.drop_duplicates().reset_index(drop=True)
-    print(f"
-Duplicate rows removed: {dups}  -> shape {df.shape}")
+    print(f"\nDuplicate rows removed: {dups}  -> shape {df.shape}")
 elif dups:
-    print(f"
-{dups} duplicate rows ({frac:.0%}) KEPT – with few categorical columns repeats are normal records, "
+    print(f"\n{dups} duplicate rows ({frac:.0%}) KEPT – with few categorical columns repeats are normal records, "
           f"not errors. Set DROP_DUPS=True to force removal.")
 else:
-    print("
-Duplicate rows: none")
+    print("\nDuplicate rows: none")
 
 miss = df.isna().sum()
-print("
---- Missing values (imputed later inside the pipeline: median / mode) ---")
+print("\n--- Missing values (imputed later inside the pipeline: median / mode) ---")
 print(miss[miss > 0] if (miss > 0).any() else "none")
 
 # conservative auto-drop: junk columns that never help a model
@@ -137,18 +153,18 @@ drop = [c for c in DROP_COLS if c in df.columns]
 for c in df.columns:
     if c in drop: continue
     s = df[c]
-    if s.isna().mean() > 0.5:                                          drop.append(c)   # mostly empty
-    elif s.nunique(dropna=False) <= 1:                                 drop.append(c)   # constant
+    if s.isna().mean() > 0.5:                                         drop.append(c)   # mostly empty
+    elif s.nunique(dropna=False) <= 1:                                drop.append(c)   # constant
     elif s.nunique() == len(df) and not pd.api.types.is_float_dtype(s):drop.append(c)   # ID-like
     elif str(c).lower() in ("id","index","unnamed: 0","no","sr","serial"): drop.append(c)
 if drop:
-    print(f"
-Dropped columns (id/constant/empty/asked): {drop}")
+    print(f"\nDropped columns (id/constant/empty/asked): {drop}")
     df = df.drop(columns=drop)
 
 # =============================================================================
 # 4) TARGET + TASK  ·  auto-detected, override with TARGET / TASK above
 # =============================================================================
+if "df" not in globals(): df = load_data()   # safety net: rebuilds df if this cell is run on its own
 target = None
 if TASK != "clustering":
     if TARGET is None:            target = df.columns[-1]              # default: last column
@@ -164,8 +180,7 @@ if task == "auto":
     elif y0.nunique() <= 2:                                         task = "classification"
     elif y0.nunique() <= 15 and float(y0.dropna().mod(1).abs().max() or 0) == 0: task = "classification"
     else:                                                           task = "regression"
-print(f"
-TASK = {task}" + (f"   TARGET = '{target}'" if target else ""))
+print(f"\nTASK = {task}" + (f"   TARGET = '{target}'" if target else ""))
 
 X = df.drop(columns=[target]) if target else df.copy()
 y = df[target] if target else None
@@ -178,8 +193,7 @@ if txt:
 
 num_cols = X.select_dtypes(include=np.number).columns.tolist()
 cat_cols = [c for c in X.columns if c not in num_cols]
-print(f"Numeric features ({len(num_cols)}): {num_cols}
-Categorical features ({len(cat_cols)}): {cat_cols}")
+print(f"Numeric features ({len(num_cols)}): {num_cols}\nCategorical features ({len(cat_cols)}): {cat_cols}")
 
 # encode a text target for classification (models need numbers)
 classes = None
@@ -207,8 +221,7 @@ if SHOW_PLOTS:
         plt.title(f"Target distribution: {target}"); plt.tight_layout(); plt.show()
     if len(num_cols) >= 1:
         d = X[num_cols[:6]]
-        d.hist(figsize=(10, 2.2 * int(np.ceil(len(d.columns) / 3))), bins=25,
-               layout=(int(np.ceil(len(d.columns) / 3)), 3))
+        d.hist(figsize=(10, 2.2 * int(np.ceil(len(d.columns) / 3))), bins=25, layout=(int(np.ceil(len(d.columns)/3)), 3))
         plt.suptitle("Numeric distributions"); plt.tight_layout(); plt.show()
         plt.figure(figsize=(9, 3))
         sns.boxplot(data=(d - d.mean()) / (d.std() + 1e-9), orient="h")
@@ -224,8 +237,7 @@ if num_cols:
     q1, q3 = X[num_cols].quantile(.25), X[num_cols].quantile(.75)
     iqr = q3 - q1
     n_out = ((X[num_cols] < q1 - 1.5 * iqr) | (X[num_cols] > q3 + 1.5 * iqr)).sum()
-    print("
-IQR outliers per numeric column:"); print(n_out[n_out > 0] if (n_out > 0).any() else "none")
+    print("\nIQR outliers per numeric column:"); print(n_out[n_out > 0] if (n_out > 0).any() else "none")
 
 # =============================================================================
 # 5) PREPROCESSING PIPELINE  ·  impute + one-hot + scale (fitted on train only)
@@ -307,13 +319,12 @@ if task in ("classification", "regression"):
     strat = y if task == "classification" and y.value_counts().min() >= 2 else None
     Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=TEST_SIZE, random_state=SEED, stratify=strat)
     Xtr, Xte = clip_iqr(Xtr, Xte)
-    print(f"
-Train {Xtr.shape} | Test {Xte.shape}" + (" | stratified" if strat is not None else ""))
+    print(f"\nTrain {Xtr.shape} | Test {Xte.shape}"
+          f"{' | stratified' if strat is not None else ''}")
 
     if task == "classification":
         cw = "balanced" if BALANCE else None
-        print("
---- Baseline ---")
+        print("\n--- Baseline ---")
         fit_eval_clf("BASELINE (most_frequent)", DummyClassifier(strategy="most_frequent", random_state=SEED),
                      Xtr, ytr, Xte, yte)
         print("--- Models ---")
@@ -322,8 +333,7 @@ Train {Xtr.shape} | Test {Xte.shape}" + (" | stratified" if strat is not None el
             if n in CLF_MODELS: fit_eval_clf(n, CLF_MODELS[n](cw), Xtr, ytr, Xte, yte)
 
         if RUN_SWEEPS:                    # sub-questions: delete any block you don't need
-            print("
---- Sweep: KNN k = 1..10 ---")
+            print("\n--- Sweep: KNN k = 1..10 ---")
             ks, accs = [], []
             for k in range(1, 11):
                 if k >= len(ytr): break
@@ -338,8 +348,7 @@ Train {Xtr.shape} | Test {Xte.shape}" + (" | stratified" if strat is not None el
                 plt.tight_layout(); plt.show()
                 print(f"  best k = {ks[int(np.argmax(accs))]}")
 
-            print("
---- Sweep: Decision Tree gini vs entropy, depth 2..10/None ---")
+            print("\n--- Sweep: Decision Tree gini vs entropy, depth 2..10/None ---")
             rows = []
             for crit in ("gini", "entropy"):
                 for d in [2, 3, 5, 10, None]:
@@ -358,16 +367,14 @@ Train {Xtr.shape} | Test {Xte.shape}" + (" | stratified" if strat is not None el
                     sns.barplot(data=tree_tab, x="max_depth", y="acc", hue="criterion")
                     plt.title("Decision Tree: depth & criterion"); plt.tight_layout(); plt.show()
 
-            print("
---- Sweep: SVM kernels ---")
+            print("\n--- Sweep: SVM kernels ---")
             for kern in ("linear", "rbf", "poly", "sigmoid"):
                 try:
                     p = pipe(SVC(kernel=kern, probability=False, class_weight=cw, random_state=SEED)).fit(Xtr, ytr)
                     print(f"  {kern:<8} acc={accuracy_score(yte, p.predict(Xte)):.3f}")
                 except Exception as e: print(f"  {kern} FAIL {str(e)[:60]}")
 
-            print("
---- Sweep: unbalanced vs class_weight='balanced' (Logistic) ---")
+            print("\n--- Sweep: unbalanced vs class_weight='balanced' (Logistic) ---")
             for lbl, w in (("plain", None), ("balanced", "balanced")):
                 try:
                     p = pipe(LogisticRegression(max_iter=2000, class_weight=w, random_state=SEED)).fit(Xtr, ytr)
@@ -378,13 +385,12 @@ Train {Xtr.shape} | Test {Xte.shape}" + (" | stratified" if strat is not None el
                 except Exception as e: print(f"  {lbl} FAIL {str(e)[:60]}")
 
     else:  # ---------------- regression ----------------
-        print("
---- Baseline ---")
+        print("\n--- Baseline ---")
         fit_eval_reg("BASELINE (mean)", DummyRegressor(strategy="mean"), Xtr, ytr, Xte, yte)
         print("--- Models ---")
         want = list(REG_MODELS) if MODELS == "auto" else ([MODELS] if isinstance(MODELS, str) else MODELS)
         best_feat = None
-        if num_cols:                                        # strongest single predictor = simple linear regression
+        if num_cols:
             c = Xtr[num_cols].corrwith(ytr).abs().sort_values(ascending=False)
             best_feat = c.index[0] if len(c) else None
         for n in want:
@@ -395,8 +401,7 @@ Train {Xtr.shape} | Test {Xte.shape}" + (" | stratified" if strat is not None el
                 fit_eval_reg(n, REG_MODELS[n](), Xtr, ytr, Xte, yte)
 
         if RUN_SWEEPS:
-            print("
---- Sweep: Regression tree depth ---")
+            print("\n--- Sweep: Regression tree depth ---")
             for d in [2, 3, 5, 10, None]:
                 try:
                     p = pipe(DecisionTreeRegressor(max_depth=d, random_state=SEED)).fit(Xtr, ytr)
@@ -405,7 +410,7 @@ Train {Xtr.shape} | Test {Xte.shape}" + (" | stratified" if strat is not None el
                 except Exception as e: print(f"  depth={d} FAIL {str(e)[:60]}")
 
 # =============================================================================
-# 8) CLUSTERING  ·  KMeans + elbow + silhouette + PCA  (set TASK="clustering")
+# 8) CLUSTERING  ·  KMeans + elbow + silhouette + PCA  (TASK="clustering")
 # =============================================================================
 k_best = None
 if task == "clustering":
@@ -425,32 +430,26 @@ if task == "clustering":
                             "Inertia (WCSS)": w, "Silhouette": s, "Main Score": s})
         km = KMeans(n_clusters=k_best, random_state=SEED, n_init=10).fit(Xc)
         labels = km.labels_
-        print(f"
-Chosen k = {k_best} | WCSS={km.inertia_:.2f} | silhouette={silhouette_score(Xc, labels):.3f}")
+        print(f"\nChosen k = {k_best} | WCSS={km.inertia_:.2f} | silhouette={silhouette_score(Xc, labels):.3f}")
         print("Cluster sizes:"); print(pd.Series(labels).value_counts().sort_index().to_string())
         if SHOW_PLOTS:
             fig, ax = plt.subplots(1, 3, figsize=(14, 3.5))
             ax[0].plot(ks, inertia, "o-"); ax[0].set_title("Elbow method (WCSS)"); ax[0].set_xlabel("k")
-            ax[1].plot(ks, sils, "o-");    ax[1].set_title("Silhouette score");    ax[1].set_xlabel("k")
-            pc = PCA(n_components=2, random_state=SEED).fit(Xc)
-            p2 = pc.transform(Xc)
-            ax[2].scatter(p2[:, 0], p2[:, 1], c=labels, cmap="viridis", s=18)
-            cen = pc.transform(km.cluster_centers_)
+            ax[1].plot(ks, sils, "o-"); ax[1].set_title("Silhouette score"); ax[1].set_xlabel("k")
+            pc = PCA(n_components=2, random_state=SEED).fit_transform(Xc)
+            ax[2].scatter(pc[:, 0], pc[:, 1], c=labels, cmap="viridis", s=18)
+            cen = PCA(n_components=2, random_state=SEED).fit(Xc).transform(km.cluster_centers_)
             ax[2].scatter(cen[:, 0], cen[:, 1], c="red", marker="X", s=160)
             ax[2].set_title(f"PCA view of {k_best} clusters")
             plt.tight_layout(); plt.show()
-        X_clustered = X.copy(); X_clustered["cluster"] = labels    # <- data with cluster labels
-        print("
-Cluster means (numeric features):")
+        X_clustered = X.copy(); X_clustered["cluster"] = labels   # <- table with cluster labels
+        print("\nCluster means (numeric features):")
         print(X_clustered.groupby("cluster")[num_cols].mean().round(2) if num_cols else "no numeric columns")
 
 # =============================================================================
 # 9) COMPARISON TABLE + BEST-MODEL VISUALS + SUMMARY
 # =============================================================================
-print("
-" + "=" * 78 + "
-MODEL COMPARISON
-" + "=" * 78)
+print("\n" + "=" * 78 + "\nMODEL COMPARISON\n" + "=" * 78)
 comp = pd.DataFrame()
 if RESULTS:
     comp = pd.DataFrame(RESULTS).sort_values("Main Score", ascending=False).reset_index(drop=True)
@@ -466,8 +465,7 @@ if RESULTS:
 
     if task == "classification" and bp is not None:
         pred = bp.predict(Xte)
-        print(f"
-Classification report – {best}")
+        print(f"\nClassification report – {best}")
         print(classification_report(yte, pred, target_names=classes, zero_division=0))
         if SHOW_PLOTS:                                   # confusion matrix + ROC of the winner
             fig, ax = plt.subplots(1, 2, figsize=(11, 4))
@@ -507,10 +505,7 @@ Classification report – {best}")
                 plt.title(f"Feature importance – {best}"); plt.tight_layout(); plt.show()
         except Exception: pass
 
-print("
-" + "=" * 78 + "
-SUMMARY
-" + "=" * 78)
+print("\n" + "=" * 78 + "\nSUMMARY\n" + "=" * 78)
 print(f"Task            : {task}")
 print(f"Target          : {target}")
 print(f"Rows x features : {X.shape[0]} x {X.shape[1]}   (seed={SEED})")
