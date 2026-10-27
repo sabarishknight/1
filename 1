@@ -1,26 +1,20 @@
-BIG DATA LABS - COMMANDS ONLY
-Open Cloudera VM -> click Terminal icon (top bar). Lines with # = don't type.
-gedit file -> type content -> Ctrl+S -> close. Use 4 spaces in Python.
+cd ~
 
-==================== LAB 1 : WORD COUNT ====================
-gedit word.txt
------
+cat > word.txt <<'EOF'
 Hello world
 Hello Hadoop
------
+EOF
 
-gedit mapper.py
------
+cat > mapper.py <<'EOF'
 #!/usr/bin/env python
 import sys
 for line in sys.stdin:
     words = line.strip().split()
     for word in words:
         print("%s\t%s" % (word, 1))
------
+EOF
 
-gedit reducer.py
------
+cat > reducer.py <<'EOF'
 #!/usr/bin/env python
 import sys
 counts = {}
@@ -29,18 +23,9 @@ for line in sys.stdin:
     counts[word] = counts.get(word, 0) + int(count)
 for word, count in counts.items():
     print("%s\t%s" % (word, count))
------
+EOF
 
-cat word.txt | python mapper.py | sort | python reducer.py
-hdfs dfs -mkdir prg1
-hdfs dfs -put /home/cloudera/word.txt /user/cloudera/prg1
-chmod 777 mapper.py reducer.py
-hadoop jar /usr/lib/hadoop-mapreduce/hadoop-streaming.jar -input /user/cloudera/prg1/word.txt -output /user/cloudera/prg1/output -mapper /home/cloudera/mapper.py -reducer /home/cloudera/reducer.py
-hdfs dfs -cat /user/cloudera/prg1/output/part-00000
-
-==================== LAB 2 : TITANIC ====================
-gedit titanic.txt
------
+cat > titanic.txt <<'EOF'
 Owen,male,22
 Hannah,female,38
 Laina,female,26
@@ -51,10 +36,9 @@ Emma,female,31
 Thomas,male,42
 Sophia,female,24
 William,male,30
------
+EOF
 
-gedit mapper2.py
------
+cat > mapper2.py <<'EOF'
 #!/usr/bin/env python
 import sys
 import csv
@@ -62,10 +46,9 @@ reader = csv.reader(sys.stdin)
 for line in reader:
     if len(line) > 2:
         print('%s,%s' % (line[1], line[2]))
------
+EOF
 
-gedit reducer2.py
------
+cat > reducer2.py <<'EOF'
 #!/usr/bin/env python
 import sys
 data = {}
@@ -78,29 +61,16 @@ for line in sys.stdin:
 for gender, values in data.items():
     average = values[0] / values[1]
     print("%s = %s" % (gender, average))
------
+EOF
 
-cat titanic.txt | python mapper2.py | sort | python reducer2.py
-hdfs dfs -mkdir prg2
-hdfs dfs -put /home/cloudera/titanic.txt /user/cloudera/prg2
-chmod 777 mapper2.py reducer2.py
-hadoop jar /usr/lib/hadoop-mapreduce/hadoop-streaming.jar -input /user/cloudera/prg2/titanic.txt -output /user/cloudera/prg2/output -mapper /home/cloudera/mapper2.py -reducer /home/cloudera/reducer2.py
-hdfs dfs -cat /user/cloudera/prg2/output/part-00000
-
-# If "output already exists": delete it, then run hadoop jar again
-hdfs dfs -rm -r /user/cloudera/prg2/output
-
-==================== LAB 3 : PIG ====================
-gedit word1.txt
------
+cat > word1.txt <<'EOF'
 1,pooja,R,20
 2,sam,Thomas,25
 3,priya,S,20
 4,pavan,Rao,20
------
+EOF
 
-pig -x local
-# now at grunt> type:
+cat > lab3.pig <<'EOF'
 A = LOAD 'word1.txt' USING PigStorage(',') AS (id:int, first_name:chararray, last_name:chararray, age:int);
 B = FOREACH A GENERATE UPPER(SUBSTRING(first_name, 0, 1)) AS first_letter;
 C = GROUP B BY first_letter;
@@ -108,20 +78,9 @@ D = FOREACH C GENERATE group AS first_letter, COUNT(B) AS count;
 E = ORDER D BY count DESC;
 F = LIMIT E 1;
 DUMP F;
-quit;
+EOF
 
-==================== LAB 4 : HDFS FILE MANAGEMENT ====================
-# needs titanic.txt from Lab 2 in /home/cloudera
-hdfs dfs -mkdir lab4
-hdfs dfs -ls /user/cloudera/lab4
-hdfs dfs -put /home/cloudera/titanic.txt /user/cloudera/lab4
-hdfs dfs -ls /user/cloudera/lab4
-hdfs dfs -cat /user/cloudera/lab4/titanic.txt
-hdfs dfs -rm -r /user/cloudera/lab4
-
-==================== LAB 5 : SPARK RDD -> DATAFRAME ====================
-gedit rdd.py
------
+cat > rdd.py <<'EOF'
 from pyspark import SparkContext
 from pyspark.sql import SQLContext
 sc = SparkContext()
@@ -134,6 +93,72 @@ rdd = sc.parallelize([
 df = sql.createDataFrame(rdd, ["No", "Dept", "No_of_students"])
 df.show()
 sc.stop()
------
+EOF
 
+cat > run1.sh <<'EOF'
+cd ~
+echo "===== LAB 1 : WORD COUNT ====="
+echo "--- Mapper output ---"
+cat word.txt | python mapper.py
+echo "--- Local MapReduce result ---"
+cat word.txt | python mapper.py | sort | python reducer.py
+hdfs dfs -mkdir -p prg1
+hdfs dfs -put -f /home/cloudera/word.txt /user/cloudera/prg1
+hdfs dfs -ls /user/cloudera/prg1
+hdfs dfs -rm -r -f /user/cloudera/prg1/output
+chmod 777 mapper.py reducer.py
+hadoop jar /usr/lib/hadoop-mapreduce/hadoop-streaming.jar -input /user/cloudera/prg1/word.txt -output /user/cloudera/prg1/output -mapper /home/cloudera/mapper.py -reducer /home/cloudera/reducer.py
+echo "===== HADOOP OUTPUT ====="
+hdfs dfs -cat /user/cloudera/prg1/output/part-00000
+EOF
+
+cat > run2.sh <<'EOF'
+cd ~
+echo "===== LAB 2 : TITANIC AVERAGE AGE ====="
+echo "--- Mapper output ---"
+cat titanic.txt | python mapper2.py
+echo "--- Local MapReduce result ---"
+cat titanic.txt | python mapper2.py | sort | python reducer2.py
+hdfs dfs -mkdir -p prg2
+hdfs dfs -put -f /home/cloudera/titanic.txt /user/cloudera/prg2
+hdfs dfs -ls /user/cloudera/prg2
+hdfs dfs -rm -r -f /user/cloudera/prg2/output
+chmod 777 mapper2.py reducer2.py
+hadoop jar /usr/lib/hadoop-mapreduce/hadoop-streaming.jar -input /user/cloudera/prg2/titanic.txt -output /user/cloudera/prg2/output -mapper /home/cloudera/mapper2.py -reducer /home/cloudera/reducer2.py
+echo "===== HADOOP OUTPUT ====="
+hdfs dfs -cat /user/cloudera/prg2/output/part-00000
+EOF
+
+cat > run3.sh <<'EOF'
+cd ~
+echo "===== LAB 3 : PIG MOST OCCURRING START LETTER ====="
+cat lab3.pig
+pig -x local lab3.pig
+EOF
+
+cat > run4.sh <<'EOF'
+cd ~
+echo "===== LAB 4 : HDFS FILE MANAGEMENT ====="
+hdfs dfs -rm -r -f /user/cloudera/lab4
+echo "--- 1. Create directory ---"
+hdfs dfs -mkdir lab4
+echo "--- 2. List directory ---"
+hdfs dfs -ls /user/cloudera/lab4
+echo "--- 3. Copy file from local to HDFS ---"
+hdfs dfs -put /home/cloudera/titanic.txt /user/cloudera/lab4
+hdfs dfs -ls /user/cloudera/lab4
+echo "--- 4. View file contents ---"
+hdfs dfs -cat /user/cloudera/lab4/titanic.txt
+echo "--- 5. Delete directory ---"
+hdfs dfs -rm -r /user/cloudera/lab4
+hdfs dfs -ls
+EOF
+
+cat > run5.sh <<'EOF'
+cd ~
+echo "===== LAB 5 : SPARK RDD TO DATAFRAME ====="
 spark-submit rdd.py
+EOF
+
+chmod 777 *.py *.sh
+ls
