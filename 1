@@ -1,0 +1,139 @@
+BIG DATA LABS - COMMANDS ONLY
+Open Cloudera VM -> click Terminal icon (top bar). Lines with # = don't type.
+gedit file -> type content -> Ctrl+S -> close. Use 4 spaces in Python.
+
+==================== LAB 1 : WORD COUNT ====================
+gedit word.txt
+-----
+Hello world
+Hello Hadoop
+-----
+
+gedit mapper.py
+-----
+#!/usr/bin/env python
+import sys
+for line in sys.stdin:
+    words = line.strip().split()
+    for word in words:
+        print("%s\t%s" % (word, 1))
+-----
+
+gedit reducer.py
+-----
+#!/usr/bin/env python
+import sys
+counts = {}
+for line in sys.stdin:
+    word, count = line.strip().split('\t')
+    counts[word] = counts.get(word, 0) + int(count)
+for word, count in counts.items():
+    print("%s\t%s" % (word, count))
+-----
+
+cat word.txt | python mapper.py | sort | python reducer.py
+hdfs dfs -mkdir prg1
+hdfs dfs -put /home/cloudera/word.txt /user/cloudera/prg1
+chmod 777 mapper.py reducer.py
+hadoop jar /usr/lib/hadoop-mapreduce/hadoop-streaming.jar -input /user/cloudera/prg1/word.txt -output /user/cloudera/prg1/output -mapper /home/cloudera/mapper.py -reducer /home/cloudera/reducer.py
+hdfs dfs -cat /user/cloudera/prg1/output/part-00000
+
+==================== LAB 2 : TITANIC ====================
+gedit titanic.txt
+-----
+Owen,male,22
+Hannah,female,38
+Laina,female,26
+Lily,female,35
+Allen,male,35
+Jack,male,28
+Emma,female,31
+Thomas,male,42
+Sophia,female,24
+William,male,30
+-----
+
+gedit mapper2.py
+-----
+#!/usr/bin/env python
+import sys
+import csv
+reader = csv.reader(sys.stdin)
+for line in reader:
+    if len(line) > 2:
+        print('%s,%s' % (line[1], line[2]))
+-----
+
+gedit reducer2.py
+-----
+#!/usr/bin/env python
+import sys
+data = {}
+for line in sys.stdin:
+    gender, age = line.strip().split(',')
+    if gender not in data:
+        data[gender] = [0, 0]
+    data[gender][0] += float(age)
+    data[gender][1] += 1
+for gender, values in data.items():
+    average = values[0] / values[1]
+    print("%s = %s" % (gender, average))
+-----
+
+cat titanic.txt | python mapper2.py | sort | python reducer2.py
+hdfs dfs -mkdir prg2
+hdfs dfs -put /home/cloudera/titanic.txt /user/cloudera/prg2
+chmod 777 mapper2.py reducer2.py
+hadoop jar /usr/lib/hadoop-mapreduce/hadoop-streaming.jar -input /user/cloudera/prg2/titanic.txt -output /user/cloudera/prg2/output -mapper /home/cloudera/mapper2.py -reducer /home/cloudera/reducer2.py
+hdfs dfs -cat /user/cloudera/prg2/output/part-00000
+
+# If "output already exists": delete it, then run hadoop jar again
+hdfs dfs -rm -r /user/cloudera/prg2/output
+
+==================== LAB 3 : PIG ====================
+gedit word1.txt
+-----
+1,pooja,R,20
+2,sam,Thomas,25
+3,priya,S,20
+4,pavan,Rao,20
+-----
+
+pig -x local
+# now at grunt> type:
+A = LOAD 'word1.txt' USING PigStorage(',') AS (id:int, first_name:chararray, last_name:chararray, age:int);
+B = FOREACH A GENERATE UPPER(SUBSTRING(first_name, 0, 1)) AS first_letter;
+C = GROUP B BY first_letter;
+D = FOREACH C GENERATE group AS first_letter, COUNT(B) AS count;
+E = ORDER D BY count DESC;
+F = LIMIT E 1;
+DUMP F;
+quit;
+
+==================== LAB 4 : HDFS FILE MANAGEMENT ====================
+# needs titanic.txt from Lab 2 in /home/cloudera
+hdfs dfs -mkdir lab4
+hdfs dfs -ls /user/cloudera/lab4
+hdfs dfs -put /home/cloudera/titanic.txt /user/cloudera/lab4
+hdfs dfs -ls /user/cloudera/lab4
+hdfs dfs -cat /user/cloudera/lab4/titanic.txt
+hdfs dfs -rm -r /user/cloudera/lab4
+
+==================== LAB 5 : SPARK RDD -> DATAFRAME ====================
+gedit rdd.py
+-----
+from pyspark import SparkContext
+from pyspark.sql import SQLContext
+sc = SparkContext()
+sql = SQLContext(sc)
+rdd = sc.parallelize([
+    (1, "AIML", 69),
+    (2, "CS", 72),
+    (3, "ECE", 99)
+])
+df = sql.createDataFrame(rdd, ["No", "Dept", "No_of_students"])
+df.show()
+sc.stop()
+-----
+
+spark-submit rdd.py
