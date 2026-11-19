@@ -1,0 +1,87 @@
+## C1
+
+# quarto install tinytex
+# install.packages(c("readxl","tseries","forecast","lmtest","vars","urca","moments"))
+# install.packages(c("FinTS","rugarch","rmgarch","BEKKs","tsDyn"))
+library(readxl); library(tseries); library(forecast); library(lmtest); library(vars); library(urca)
+library(moments); library(FinTS); library(rugarch); library(rmgarch); library(BEKKs); library(tsDyn)
+st <- function(z) round(c(ADF=adf.test(z)$p.value, PP=pp.test(z)$p.value, KPSS=kpss.test(z)$p.value), 4)
+
+
+## C2
+
+f <- file.choose()
+d <- if (grepl("xls", f)) read_excel(f) else read.csv(f)
+d <- d[order(as.Date(d[[1]])), ]; dates <- as.Date(d[[1]])
+X <- as.data.frame(lapply(d[-1], function(z) as.numeric(gsub(",", "", z))))
+X <- X[, colSums(is.na(X)) == 0, drop=FALSE]
+X <- X[, 1:min(ncol(X), 3), drop=FALSE]; head(X)
+y <- X[, 1]; n <- length(y); r <- diff(log(y))
+lX <- log(X); Rd <- as.data.frame(diff(as.matrix(lX)))
+
+plot(dates, y, type="l"); plot(dates[-1], r, type="l")
+st(y); st(r)
+
+
+##  TREND
+
+ma <- function(k) as.numeric(stats::filter(y, rep(1/k, k)))
+plot(dates, y, type="l"); lines(dates, ma(5), col=2); lines(dates, ma(30), col=4)
+summary(lm(y ~ seq_along(y)))
+h <- n %/% 2; c(mean(y[1:h]), mean(y[(h+1):n]))
+par(mfrow=c(3,1), mar=c(3,3,2,1))
+plot(ma(90), type="l", main="Long"); plot(ma(30)-ma(90), type="l", main="Medium"); plot(y-ma(30), type="l", main="Short")
+par(mfrow=c(1,1), mar=c(5,4,4,2)+0.1)
+plot(decompose(ts(y, frequency=12)))
+
+
+##  ARIMA
+
+acf(diff(y)); pacf(diff(y))
+m1 <- Arima(y, order=c(1,1,0)); m2 <- Arima(y, order=c(0,1,1)); m3 <- Arima(y, order=c(1,1,1))
+AIC(m1,m2,m3); BIC(m1,m2,m3); best <- m3
+coeftest(best); checkresiduals(best)
+fc <- forecast(best, h=20); fc; plot(fc, include=100)
+auto.arima(y); k <- floor(.8*n); accuracy(forecast(auto.arima(y[1:k]), h=n-k), y[(k+1):n])
+
+
+## VAR
+
+if (ncol(Rd) < 2) stop("Needs 2+ columns: load the World Indices / VAR file")
+nm <- names(Rd); a <- nm[1]; b <- nm[2]
+p <- VARselect(Rd, lag.max=10)$selection[["AIC(n)"]]; p
+summary(ca.jo(lX, type="trace", ecdet="trend", K=2))
+summary(VECM(lX, lag=2, r=1))
+V <- VAR(Rd, p=p); summary(V)
+roots(V); serial.test(V); arch.test(V); normality.test(V)
+for (v in nm) print(causality(V, cause=v)$Granger)
+plot(irf(V, impulse=a, response=b, n.ahead=10, boot=FALSE))
+fevd(V, n.ahead=10)[[a]]; plot(fevd(V, n.ahead=10), names=a)
+fanchart(predict(V, n.ahead=10), names=a)
+
+
+## GARCH
+
+sapply(Rd, function(z) c(ARCH=ArchTest(z)$p.value, LB=Box.test(z,10,"Ljung-Box")$p.value, JB=jarque.bera.test(z)$p.value))
+gf <- function(z, m="sGARCH") ugarchfit(ugarchspec(variance.model=list(model=m), mean.model=list(armaOrder=c(0,0)), distribution.model="std"), z)
+g <- gf(Rd[,1]); g; gf(Rd[,1], "eGARCH"); gf(Rd[,1], "gjrGARCH")
+zr <- as.numeric(residuals(g, standardize=TRUE)); Box.test(zr, 10, "Ljung-Box"); ArchTest(zr, lags=10)
+plot(ugarchforecast(g, n.ahead=10), which=3)
+
+
+##  DCC AND BEKK
+
+if (ncol(Rd) < 2) stop("Needs 2+ columns: load the World Indices / VAR file")
+u <- ugarchspec(mean.model=list(armaOrder=c(0,0)), variance.model=list(model="sGARCH"))
+D <- dccfit(dccspec(multispec(replicate(ncol(Rd), u)), dccOrder=c(1,1), distribution="mvnorm"), data=Rd); D
+plot(rcor(D)[1,2,], type="l")
+b <- bekk_fit(bekk_spec(model=list(type="bekk", asymmetric=FALSE)), as.matrix(Rd), QML_t_ratios=TRUE); summary(b)
+2*(1-pnorm(abs(b$A_t))); 2*(1-pnorm(abs(b$G_t)))
+
+
+## RULES
+# ADF/PP p<0.05 = stationary. KPSS p>0.05 = stationary.
+# Ljung-Box p>0.05 = good model. Lowest AIC/BIC = best.
+# Johansen: stat > 5pct = cointegrated. Granger p<0.05 = causes.
+# ARCH p<0.05 = use GARCH. dcca1+dccb1<1 = stable. BEKK A/G p<0.05 = spillover.
+
